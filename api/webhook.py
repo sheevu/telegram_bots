@@ -1,0 +1,246 @@
+import os
+import logging
+import json
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from openai import OpenAI
+from dotenv import load_dotenv
+import asyncio
+from typing import Optional
+from http.server import BaseHTTPRequestHandler
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Initialize OpenAI client with error handling
+try:
+    client = OpenAI(
+        api_key=os.getenv('OPENAI_API_KEY'),
+        timeout=30.0,
+    )
+except Exception as e:
+    logger.error(f"Failed to initialize OpenAI client: {e}")
+    client = None
+
+# Bot token from environment
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+
+# Validate environment variables
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN not found in environment variables")
+    raise ValueError("BOT_TOKEN is required")
+if not os.getenv('OPENAI_API_KEY'):
+    logger.error("OPENAI_API_KEY not found in environment variables")
+    raise ValueError("OPENAI_API_KEY is required")
+
+# System prompt for better AI responses
+SYSTEM_PROMPT = (
+    "You are a friendly, warm, and helpful AI concierge bot. "
+    "Keep responses concise but heartfelt and engaging. "
+    "Be supportive, encouraging, and personable in your interactions. "
+    "Provide practical advice when asked and maintain a positive tone."
+)
+
+async def start(update: Update, context) -> None:
+    """Send a message when the command /start is issued."""
+    welcome_message = (
+        "🤖 Welcome! I'm your friendly AI concierge bot.\n\n"
+        "Here's what I can help you with:\n"
+        "• /help - Show all available commands\n"
+        "• /love - Get today's love quote\n"
+        "• /poetry - Receive a romantic quote\n"
+        "• /song - Get a song suggestion\n"
+        "• /advice - Daily helpful tip\n"
+        "• /mood - Quick mood check-in\n\n"
+        "You can also just chat with me naturally!"
+    )
+    await update.message.reply_text(welcome_message)
+
+async def help_command(update: Update, context) -> None:
+    """Send a message when the command /help is issued."""
+    help_text = (
+        "🆘 **Available Commands:**\n\n"
+        "🌟 /start - Welcome message and intro\n"
+        "❓ /help - Show this help message\n"
+        "💕 /love - Today's love quote via AI\n"
+        "🎭 /poetry - Short romantic quote\n"
+        "🎵 /song - Song recommendation\n"
+        "💡 /advice - Daily helpful tip\n"
+        "😊 /mood - Simple mood check-in\n\n"
+        "💬 You can also send me any message and I'll respond as your friendly AI concierge!"
+    )
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def get_openai_response(prompt: str, max_tokens: int = 150) -> str:
+    """Get response from OpenAI API with improved error handling and modern API usage."""
+    if not client:
+        return "Sorry, AI service is currently unavailable. Please try again later! 🤖"
+    
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.7,
+            top_p=1.0,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
+            timeout=30
+        )
+        
+        if response.choices and len(response.choices) > 0:
+            return response.choices[0].message.content.strip()
+        else:
+            return "I'm having trouble generating a response right now. Please try again! 🤖"
+            
+    except Exception as e:
+        logger.error(f"OpenAI API error: {e}")
+        error_messages = [
+            "Sorry, I'm having trouble connecting to my AI brain right now. Please try again later! 🤖",
+            "Oops! My AI circuits are a bit tangled right now. Give me a moment and try again! ⚡",
+            "My AI brain needs a quick reboot! Please try your request again in a moment. 🔄"
+        ]
+        import random
+        return random.choice(error_messages)
+
+async def love_quote(update: Update, context) -> None:
+    """Send today's love quote."""
+    prompt = "Generate a beautiful, inspiring love quote for today. Make it heartwarming, meaningful, and uplifting."
+    quote = await get_openai_response(prompt)
+    await update.message.reply_text(
+        f"💕 **Today's Love Quote:**\n\n{quote}\n\n✨ _Spread love wherever you go!_", 
+        parse_mode='Markdown'
+    )
+
+async def poetry_quote(update: Update, context) -> None:
+    """Send a short romantic quote."""
+    prompt = "Create a short, beautiful romantic quote or line of poetry. Keep it elegant, touching, and memorable."
+    quote = await get_openai_response(prompt)
+    await update.message.reply_text(
+        f"🎭 **Romantic Quote:**\n\n_{quote}_\n\n💝 _For the romantic soul_", 
+        parse_mode='Markdown'
+    )
+
+async def song_suggestion(update: Update, context) -> None:
+    """Suggest a song."""
+    prompt = "Suggest a great song (artist and title) with a brief reason why it's worth listening to. Make it uplifting, meaningful, or emotionally resonant."
+    suggestion = await get_openai_response(prompt)
+    await update.message.reply_text(
+        f"🎵 **Song Suggestion:**\n\n{suggestion}\n\n🎶 _Enjoy the music!_", 
+        parse_mode='Markdown'
+    )
+
+async def daily_advice(update: Update, context) -> None:
+    """Give daily advice."""
+    prompt = "Share a practical, positive daily life tip or advice. Make it actionable, encouraging, and genuinely helpful for personal growth."
+    advice = await get_openai_response(prompt)
+    await update.message.reply_text(
+        f"💡 **Daily Advice:**\n\n{advice}\n\n🌟 _You've got this!_", 
+        parse_mode='Markdown'
+    )
+
+async def mood_checkin(update: Update, context) -> None:
+    """Simple mood check-in with encouraging message."""
+    mood_message = (
+        "😊 **Mood Check-in**\n\n"
+        "How are you feeling today?\n\n"
+        "Remember:\n"
+        "• It's okay to have ups and downs\n"
+        "• Every day is a fresh start\n"
+        "• You're doing better than you think!\n"
+        "• Small steps lead to big changes\n\n"
+        "💪 Tell me what's on your mind, I'm here to listen and help!"
+    )
+    await update.message.reply_text(mood_message, parse_mode='Markdown')
+
+async def handle_message(update: Update, context) -> None:
+    """Handle regular messages with AI concierge response."""
+    if not update.message or not update.message.text:
+        return
+        
+    user_message = update.message.text
+    user_name = update.effective_user.first_name or "friend"
+    
+    prompt = (
+        f"As a friendly AI concierge, respond warmly to this message from {user_name}: '{user_message}'. "
+        f"Be helpful, encouraging, personable, and provide practical value when possible. "
+        f"If they're asking for help or advice, provide actionable suggestions. "
+        f"If they're sharing something, respond empathetically and engagingly."
+    )
+    
+    response = await get_openai_response(prompt, max_tokens=200)
+    await update.message.reply_text(f"🤖 {response}")
+
+# Create the bot application
+application = None
+
+def get_application():
+    """Get or create the bot application."""
+    global application
+    if application is None:
+        application = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .build()
+        )
+        
+        # Register command handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("love", love_quote))
+        application.add_handler(CommandHandler("poetry", poetry_quote))
+        application.add_handler(CommandHandler("song", song_suggestion))
+        application.add_handler(CommandHandler("advice", daily_advice))
+        application.add_handler(CommandHandler("mood", mood_checkin))
+        
+        # Handle regular messages (non-commands)
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        )
+        
+    return application
+
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        """Handle incoming webhook from Telegram."""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            update_data = json.loads(post_data.decode('utf-8'))
+            
+            # Create Update object
+            update = Update.de_json(update_data, get_application().bot)
+            
+            # Process the update
+            asyncio.run(get_application().process_update(update))
+            
+            # Send response
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+            
+        except Exception as e:
+            logger.error(f"Error processing webhook: {e}")
+            self.send_response(500)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Error')
+    
+    def do_GET(self):
+        """Handle GET requests - health check."""
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Telegram Bot is running!')
